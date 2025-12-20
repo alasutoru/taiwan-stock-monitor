@@ -66,7 +66,7 @@ def download_stock_data(item):
             return {"status": "exists", "tkr": yf_tkr}
 
         # ✅ 關鍵 1: 初始隨機休眠 (0.5~1.15秒)，打亂請求頻率
-        time.sleep(random.uniform(0.5, 1.15)
+        time.sleep(random.uniform(0.5, 1.15))
 
         tk = yf.Ticker(yf_tkr)
         
@@ -136,4 +136,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
