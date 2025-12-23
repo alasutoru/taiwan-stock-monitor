@@ -1,30 +1,39 @@
-# -*- coding: utf-8 -*-
-import os, time, random, json, subprocess
+# -*- coding: utf-8 -*-  改用東方財富取代akshare
+import os, sys, time, random, json, subprocess
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
-# ========== 參數與路徑 ==========
+# ========== 參數與路徑設定 ==========
 MARKET_CODE = "cn-share"
 DATA_SUBDIR = "dayK"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data", MARKET_CODE, DATA_SUBDIR)
-# 快取路徑：放在 data/cn-share/lists 下以保持結構整潔
 LIST_DIR = os.path.join(BASE_DIR, "data", MARKET_CODE, "lists")
 CACHE_LIST_PATH = os.path.join(LIST_DIR, "cn_stock_list_cache.json")
 
-THREADS_CN = 4
+# GitHub Actions 建議 thread 不要開太高，避免被 Yahoo 封鎖 IP
+THREADS_CN = 4 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(LIST_DIR, exist_ok=True)
 
 def log(msg: str):
     print(f"{pd.Timestamp.now():%H:%M:%S}: {msg}")
 
+def ensure_pkg(pkg: str):
+    try:
+        __import__(pkg)
+    except ImportError:
+        log(f"🔧 正在安裝 {pkg}...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", pkg])
+
 def get_cn_list():
-    """使用 akshare 獲取 A 股清單，具備多重防呆與重試機制"""
-    threshold = 4000  # 正常 A 股應有 5000 檔以上，低於 4000 視為異常
+    """獲取 A 股清單：整合 EM 接口與多重保底機制"""
+    ensure_pkg("akshare")
+    import akshare as ak
+    threshold = 4500  # A 股正常應有 5000+ 檔
     
     # 1. 檢查今日快取
     if os.path.exists(CACHE_LIST_PATH):
@@ -34,106 +43,114 @@ def get_cn_list():
                 with open(CACHE_LIST_PATH, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     if len(data) >= threshold:
-                        log(f"📦 載入今日 A 股清單快取 (共 {len(data)} 檔)...")
+                        log(f"📦 載入今日快取 (共 {len(data)} 檔)")
                         return data
         except Exception as e:
-            log(f"⚠️ 讀取快取失敗: {e}")
+            log(f"⚠️ 快取讀取失敗: {e}")
 
-    # 2. 進入 API 重試迴圈
-    import akshare as ak
-    max_retries = 3
-    for i in range(max_retries):
-        log(f"📡 正在從 akshare 獲取清單 (第 {i+1}/{max_retries} 次嘗試)...")
-        try:
-            # 獲取 A 股代碼名稱
-            df = ak.stock_info_a_code_name()
-            
-            # 代碼補齊與過濾 (確保 000001 這種格式)
-            df['code'] = df['code'].astype(str).str.zfill(6)
-            valid_prefixes = ('000','001','002','003','300','301','302','600','601','603','605','688','689')
-            df = df[df['code'].str.startswith(valid_prefixes)]
-            
-            res = [f"{row['code']}&{row['name']}" for _, row in df.iterrows()]
-            
-            # 數量門檻判定
-            if len(res) >= threshold:
-                log(f"✅ 成功獲取 A 股清單，共 {len(res)} 檔。")
-                with open(CACHE_LIST_PATH, "w", encoding="utf-8") as f:
-                    json.dump(res, f, ensure_ascii=False)
-                return res
-            else:
-                log(f"⚠️ 數量異常 ({len(res)} 檔)，準備重試...")
-                
-        except Exception as e:
-            log(f"❌ 嘗試失敗: {e}")
+    # 2. 嘗試 EM 接口 (通常比標準接口穩定)
+    log("📡 嘗試從 Akshare EM 接口獲取清單...")
+    try:
+        df_sh = ak.stock_sh_a_spot_em()
+        df_sz = ak.stock_sz_a_spot_em()
+        df = pd.concat([df_sh, df_sz], ignore_index=True)
         
-        if i < max_retries - 1:
-            wait_time = (i + 1) * 5
-            log(f"⏳ 等待 {wait_time} 秒後重試...")
-            time.sleep(wait_time)
+        df['code'] = df['代码'].astype(str).str.zfill(6)
+        # 過濾常見 A 股板塊 (主板、創業板、科創板)
+        valid_prefixes = ('000','001','002','003','300','301','600','601','603','605','688')
+        df = df[df['code'].str.startswith(valid_prefixes)]
+        
+        res = [f"{row['code']}&{row['名称']}" for _, row in df.iterrows()]
+        
+        if len(res) >= threshold:
+            with open(CACHE_LIST_PATH, "w", encoding="utf-8") as f:
+                json.dump(res, f, ensure_ascii=False)
+            log(f"✅ 成功獲取 {len(res)} 檔標的")
+            return res
+    except Exception as e:
+        log(f"⚠️ EM 接口失敗: {e}")
 
-    # 3. 終極保底：讀取歷史快取
+    # 3. 歷史快取保底
     if os.path.exists(CACHE_LIST_PATH):
-        log("🔄 API 請求全數失敗，使用歷史快取備援...")
+        log("🔄 接口全數失敗，使用過期快取備援...")
         with open(CACHE_LIST_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    log("🚨 警告：完全無法取得清單，執行最小測試集。")
-    return ["600519&貴州茅台", "000001&平安銀行"]
+    # 4. 最終保底 (核心權值股)
+    log("🚨 完全無法取得清單，執行保底測試集")
+    return ["600519&貴州茅台", "000001&平安銀行", "300750&寧德時代", "601318&中國平安"]
 
 def download_one(item):
-    """單檔下載邏輯"""
-    try:
-        code, name = item.split('&', 1)
-        # Yahoo Finance 格式：6 開頭為上海 (.SS)，其餘為深圳 (.SZ)
-        symbol = f"{code}.SS" if code.startswith('6') else f"{code}.SZ"
-        # 檔名格式：Code_Name.csv
-        out_path = os.path.join(DATA_DIR, f"{code}_{name}.csv")
+    """單檔下載邏輯：具備重試與強化防封鎖"""
+    code, name = item.split('&', 1)
+    # Yahoo Finance 格式
+    symbol = f"{code}.SS" if code.startswith('6') else f"{code}.SZ"
+    out_path = os.path.join(DATA_DIR, f"{code}_{name}.csv")
 
-        # 檢查檔案是否已存在且有內容 (續跑機制)
-        if os.path.exists(out_path) and os.path.getsize(out_path) > 1000:
-            return {"status": "exists", "code": code}
+    # 續跑機制：若檔案已存在且大小正常則跳過
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 1500:
+        return {"status": "exists", "code": code}
 
-        # 適度暫停避免被限流
-        time.sleep(random.uniform(0.3, 0.8))
-        
-        tk = yf.Ticker(symbol)
-        # 抓取 2 年日 K
-        hist = tk.history(period="2y", timeout=20)
-        
-        if hist is not None and not hist.empty:
-            hist.reset_index(inplace=True)
-            hist.columns = [c.lower() for c in hist.columns]
-            # 確保日期沒有時區問題
-            if 'date' in hist.columns:
-                hist['date'] = pd.to_datetime(hist['date'], utc=True).dt.tz_localize(None)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # 隨機延遲 1.0~2.5 秒，模擬真人行為
+            time.sleep(random.uniform(1.0, 2.5))
             
-            hist.to_csv(out_path, index=False, encoding='utf-8-sig')
-            return {"status": "success", "code": code}
-        return {"status": "empty", "code": code}
-    except Exception:
-        return {"status": "error", "code": item.split('&')[0]}
+            tk = yf.Ticker(symbol)
+            # 下載 2 年數據
+            hist = tk.history(period="2y", timeout=25)
+            
+            if hist is not None and not hist.empty:
+                hist.reset_index(inplace=True)
+                hist.columns = [c.lower() for c in hist.columns]
+                
+                # 時間格式處理
+                if 'date' in hist.columns:
+                    hist['date'] = pd.to_datetime(hist['date'], utc=True).dt.tz_localize(None)
+                
+                # 儲存 CSV (utf-8-sig 確保 Excel 開啟中文不亂碼)
+                hist.to_csv(out_path, index=False, encoding='utf-8-sig')
+                return {"status": "success", "code": code}
+            else:
+                # 有些代碼可能已下市或抓不到
+                if attempt == max_retries - 1:
+                    return {"status": "empty", "code": code}
+                
+        except Exception:
+            if attempt == max_retries - 1:
+                return {"status": "error", "code": code}
+            time.sleep(random.randint(5, 10)) # 失敗後進入冷卻再重試
+            
+    return {"status": "error", "code": code}
 
 def main():
-    log("🇨🇳 中國 A 股 K 線下載器啟動")
+    start_time = time.time()
+    log("🇨🇳 中國 A 股數據同步器啟動 (GitHub Actions 優化版)")
+    
     items = get_cn_list()
-    log(f"🚀 開始下載處理 (共 {len(items)} 檔標的)")
+    log(f"🚀 目標總數: {len(items)} 檔")
     
     stats = {"success": 0, "exists": 0, "empty": 0, "error": 0}
     
-    # 使用多執行緒提升下載速度
+    # 使用 ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=THREADS_CN) as executor:
-        futs = {executor.submit(download_one, it): it for it in items}
-        pbar = tqdm(total=len(items), desc="CN 下載進度")
+        futures = {executor.submit(download_one, it): it for it in items}
+        pbar = tqdm(total=len(items), desc="下載進度")
         
-        for f in as_completed(futs):
+        for f in as_completed(futures):
             res = f.result()
             stats[res.get("status", "error")] += 1
             pbar.update(1)
         
         pbar.close()
-    
-    log(f"📊 A 股下載報告: 成功={stats['success']}, 跳過(已存在)={stats['exists']}, 失敗={stats['error']}")
+
+    duration = (time.time() - start_time) / 60
+    log(f"📊 執行報告 (耗時 {duration:.1f} 分鐘):")
+    log(f"   - 成功: {stats['success']}")
+    log(f"   - 跳過(已存在): {stats['exists']}")
+    log(f"   - 失敗/無數據: {stats['error'] + stats['empty']}")
+    log("✨ 數據更新完成，準備進行矩陣分析...")
 
 if __name__ == "__main__":
     main()
