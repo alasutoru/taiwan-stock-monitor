@@ -36,6 +36,7 @@ class StockNotifier:
     def send_stock_report(self, market_name, img_data, report_df, text_reports, stats=None):
         """
         🚀 專業版更新：整合智慧快取統計、六國專業平台跳轉與動能矩陣圖
+        優化：智慧匹配邏輯，支援中文名稱識別
         """
         if not self.resend_api_key:
             print("⚠️ 缺少 Resend API Key，無法寄信。")
@@ -49,19 +50,22 @@ class StockNotifier:
         fail_count = stats.get('fail', 0) if stats else 0
         success_rate = f"{(success_count/total_count)*100:.1f}%" if isinstance(total_count, (int, float)) and total_count > 0 else "N/A"
 
-        # --- 💡 智慧匹配平台名稱 (同步對接 analyzer.py 之 get_market_url 邏輯) ---
+        # --- 💡 智慧匹配平台名稱 (對接 analyzer.py 之 get_market_url 邏輯) ---
+        # 同時檢查小寫 ID 以及 market_name 中文字眼
         m_id = market_name.lower()
-        if "us" in m_id:
+        
+        if "us" in m_id or "美國" in market_name:
             p_name, p_url = "StockCharts", "https://stockcharts.com/"
-        elif "hk" in m_id:
+        elif "hk" in m_id or "香港" in market_name:
             p_name, p_url = "AASTOCKS 阿思達克", "http://www.aastocks.com/"
-        elif "cn" in m_id:
+        elif "cn" in m_id or "中國" in market_name:
             p_name, p_url = "東方財富網 (EastMoney)", "https://www.eastmoney.com/"
-        elif "jp" in m_id:
+        elif "jp" in m_id or "日本" in market_name:
             p_name, p_url = "樂天證券 (Rakuten)", "https://www.rakuten-sec.co.jp/"
-        elif "kr" in m_id:
+        elif "kr" in m_id or "韓國" in market_name:
             p_name, p_url = "Naver Finance", "https://finance.naver.com/"
         else:
+            # 預設為台灣市場
             p_name, p_url = "玩股網 (WantGoo)", "https://www.wantgoo.com/"
 
         # --- 2. 構建 HTML 內容 ---
@@ -105,13 +109,13 @@ class StockNotifier:
             """
         html_content += "</div>"
 
-        # --- 4. 插入文字報酬分布明細 (對應 analyzer.py 分箱邏輯) ---
+        # --- 4. 插入文字報酬分布明細 ---
         html_content += "<div style='margin-top: 20px;'>"
         for period, report in text_reports.items():
-            p_name = {"Week": "週", "Month": "月", "Year": "年"}.get(period, period)
+            p_name_zh = {"Week": "週", "Month": "月", "Year": "年"}.get(period, period)
             html_content += f"""
             <div style="margin-bottom: 20px;">
-                <h4 style="color: #16a085; margin-bottom: 8px;">📊 {p_name} K線 最高-進攻 報酬分布明細</h4>
+                <h4 style="color: #16a085; margin-bottom: 8px;">📊 {p_name_zh} K線 最高-進攻 報酬分布明細</h4>
                 <pre style="background-color: #2d3436; color: #dfe6e9; padding: 15px; border-radius: 5px; font-size: 12px; white-space: pre-wrap; font-family: 'Courier New', monospace;">{report}</pre>
             </div>
             """
@@ -126,7 +130,7 @@ class StockNotifier:
         </html>
         """
 
-        # --- 5. 處理附件 ---
+        # --- 5. 處理附件 (Inline Embedding) ---
         attachments = []
         for img in img_data:
             try:
@@ -150,6 +154,8 @@ class StockNotifier:
                 "attachments": attachments
             })
             print(f"✅ {market_name} 報告已寄送！")
+            
+            # Telegram 簡報
             tg_msg = f"📊 <b>{market_name} 監控報表已送達</b>\n成功率: {success_rate}\n樣本: {success_count} 檔"
             self.send_telegram(tg_msg)
             return True
