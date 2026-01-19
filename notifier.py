@@ -11,7 +11,7 @@ class StockNotifier:
         self.tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.tg_chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.resend_api_key = os.getenv("RESEND_API_KEY")
-        
+        self.receiver_email = os.getenv("REPORT_RECEIVER_EMAIL")        
         if self.resend_api_key:
             resend.api_key = self.resend_api_key
 
@@ -174,7 +174,7 @@ class StockNotifier:
         try:
             resend.Emails.send({
                 "from": "StockMonitor <onboarding@resend.dev>",
-                "to": "grissomlin643@gmail.com",
+                "to": self.receiver_email,
                 "subject": f"🚀 {market_name} 全方位監控報告 - {report_time.split(' ')[0]}",
                 "html": html_content,
                 "attachments": attachments
@@ -189,3 +189,4 @@ class StockNotifier:
         except Exception as e:
             print(f"❌ 寄送失敗: {e}")
             return False
+
