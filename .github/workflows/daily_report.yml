@@ -10,14 +10,7 @@ on:
         required: true
         default: 'all'
         type: choice
-        options:
-          - all
-          - tw-share
-          - us-share
-          - hk-share
-          - cn-share
-          - jp-share
-          - kr-share
+        options: [all, tw-share, us-share, hk-share, cn-share, jp-share, kr-share]
 
 jobs:
   global-market-analysis:
@@ -35,28 +28,19 @@ jobs:
           - { id: "kr-share", name: "Korea",  emoji: "🇰🇷" }
 
     steps:
-      # 💡 修正點：將判斷移到第一個 Step 的 if 中
-      # 這樣如果不符合，第一個步驟就會跳過，後續步驟也會因為沒執行而停止
       - name: Check if market should run
         id: check_run
-        run: |
-          echo "Checking if ${{ matrix.market.id }} should run..."
-        if: |
-          github.event_name == 'schedule' || 
-          github.event.inputs.market_choice == 'all' || 
-          github.event.inputs.market_choice == matrix.market.id
+        run: echo "Checking if ${{ matrix.market.id }} should run..."
+        if: github.event_name == 'schedule' || github.event.inputs.market_choice == 'all' || github.event.inputs.market_choice == matrix.market.id
 
       - name: Checkout Code
-        # 💡 使用上次 Check 的結果來決定是否執行
         if: steps.check_run.outcome == 'success'
         uses: actions/checkout@v4
 
       - name: Set up Python
         if: steps.check_run.outcome == 'success'
         uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          cache: 'pip'
+        with: { python-version: '3.10', cache: 'pip' }
 
       - name: Cache Stock Data
         if: steps.check_run.outcome == 'success'
@@ -66,8 +50,7 @@ jobs:
             data/${{ matrix.market.id }}/dayK
             data/${{ matrix.market.id }}/lists
           key: ${{ runner.os }}-stock-${{ matrix.market.id }}-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-stock-${{ matrix.market.id }}-
+          restore-keys: ${{ runner.os }}-stock-${{ matrix.market.id }}-
 
       - name: Environment Setup
         if: steps.check_run.outcome == 'success'
@@ -80,6 +63,9 @@ jobs:
       - name: Run Market Analysis
         if: steps.check_run.outcome == 'success'
         env:
+          # --- 關鍵修正：在此對接 GitHub Secrets ---
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          REPORT_RECEIVER_EMAIL: ${{ vars.REPORT_RECEIVER_EMAIL }}
+          REPORT_RECEIVER_EMAIL: ${{ secrets.REPORT_RECEIVER_EMAIL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python main.py --market ${{ matrix.market.id }}
