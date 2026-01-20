@@ -81,4 +81,5 @@ jobs:
         if: steps.check_run.outcome == 'success'
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          REPORT_RECEIVER_EMAIL: ${{ vars.REPORT_RECEIVER_EMAIL }}
         run: python main.py --market ${{ matrix.market.id }}
