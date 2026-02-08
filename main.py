@@ -117,11 +117,11 @@ def main():
     # 市場配置表
     markets_config = {
         "tw-share": {"name": "台灣股市", "emoji": "🇹🇼"},
-        "hk-share": {"name": "香港股市", "emoji": "🇭🇰"},
-        "cn-share": {"name": "中國股市", "emoji": "🇨🇳"},
-        "jp-share": {"name": "日本股市", "emoji": "🇯🇵"},
-        "kr-share": {"name": "韓國股市", "emoji": "🇰🇷"},
-        "us-share": {"name": "美國股市", "emoji": "🇺🇸"}
+        # "hk-share": {"name": "香港股市", "emoji": "🇭🇰"},
+        # "cn-share": {"name": "中國股市", "emoji": "🇨🇳"},
+        # "jp-share": {"name": "日本股市", "emoji": "🇯🇵"},
+        # "kr-share": {"name": "韓國股市", "emoji": "🇰🇷"},
+        # "us-share": {"name": "美國股市", "emoji": "🇺🇸"}
     }
 
     if args.market == 'all':
